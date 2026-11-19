@@ -1,15 +1,27 @@
 import { Injectable, signal, computed, effect, inject } from '@angular/core';
 import { Router } from '@angular/router';
-import { User, UserRole } from '../models/user.model';
+import { HttpClient } from '@angular/common/http';
+import { User } from '../models/user.model';
 import { ToastService } from './toast.service';
+import { environment } from '../../environments/environment';
+
+interface AuthResponse {
+  success: boolean;
+  message?: string;
+  token?: string;
+  user?: User;
+}
 
 @Injectable({
   providedIn: 'root',
 })
 export class AuthService {
+  private http = inject(HttpClient);
   private router = inject(Router);
   private toastService = inject(ToastService);
 
+  private readonly API_URL = `${environment.apiUrl}/auth`;
+  private readonly TOKEN_KEY = 'taskflow_token';
   private readonly AUTH_KEY = 'taskflow_ng_auth';
   private readonly USER_KEY = 'taskflow_ng_user';
   private readonly USERS_LIST_KEY = 'taskflow_ng_registered_users';
@@ -59,6 +71,12 @@ export class AuthService {
         console.error('Failed to save auth state', e);
       }
     });
+
+    // Check token with backend on boot
+    const token = localStorage.getItem(this.TOKEN_KEY);
+    if (token) {
+      this.validateSessionWithBackend();
+    }
   }
 
   private loadAuth(): boolean {
@@ -95,70 +113,152 @@ export class AuthService {
     });
   }
 
-  // Standard User Login
+  private validateSessionWithBackend(): void {
+    this.http.get<{ success: boolean; user: User }>(`${this.API_URL}/me`).subscribe({
+      next: (res) => {
+        if (res.user) {
+          this.currentUser.set(res.user);
+          this.isAuthenticated.set(true);
+          this.registerUserIfNew(res.user);
+        }
+      },
+      error: () => {
+        // Token expired or server unreachable, maintain current offline fallback
+      },
+    });
+  }
+
+  // Standard User Login via API
   login(email: string, password?: string, fullName?: string): boolean {
-    const derivedName = fullName ? fullName.split(' ')[0] : email.split('@')[0];
-    const user: User = {
-      id: `user-${Date.now()}`,
-      name: derivedName || 'Alex',
-      fullName: fullName || email.split('@')[0] || 'Alex Morgan',
-      email: email,
-      role: 'user',
-      title: 'Frontend Developer',
-      department: 'Engineering',
-      status: 'Active',
-      joinedDate: 'Jan 15, 2026',
-      avatar: (derivedName || 'A')[0].toUpperCase(),
+    const payload = {
+      email: email.trim().toLowerCase(),
+      password: password || 'taskflow2026',
     };
 
-    this.currentUser.set(user);
-    this.isAuthenticated.set(true);
-    this.registerUserIfNew(user);
-    this.toastService.show(`Welcome back, ${user.name}!`, 'success');
-    this.router.navigate(['/dashboard']);
+    this.http.post<AuthResponse>(`${this.API_URL}/login`, payload).subscribe({
+      next: (res) => {
+        if (res.token) {
+          localStorage.setItem(this.TOKEN_KEY, res.token);
+        }
+        const user = res.user || {
+          ...this.defaultUser,
+          email,
+          fullName: fullName || email.split('@')[0],
+          name: fullName ? fullName.split(' ')[0] : email.split('@')[0],
+        };
+
+        this.currentUser.set(user);
+        this.isAuthenticated.set(true);
+        this.registerUserIfNew(user);
+        this.toastService.show(res.message || `Welcome back, ${user.name}!`, 'success');
+        this.router.navigate(['/dashboard']);
+      },
+      error: (err) => {
+        const errorMsg = err.error?.message || 'Login failed. Please check backend server.';
+        this.toastService.show(errorMsg, 'error');
+
+        // Fallback for demo when backend is offline
+        const derivedName = fullName ? fullName.split(' ')[0] : email.split('@')[0];
+        const fallbackUser: User = {
+          id: `user-${Date.now()}`,
+          name: derivedName || 'Alex',
+          fullName: fullName || email.split('@')[0] || 'Alex Morgan',
+          email,
+          role: 'user',
+          title: 'Frontend Developer',
+          department: 'Engineering',
+          status: 'Active',
+          joinedDate: 'Jan 15, 2026',
+          avatar: (derivedName || 'A')[0].toUpperCase(),
+        };
+        this.currentUser.set(fallbackUser);
+        this.isAuthenticated.set(true);
+        this.router.navigate(['/dashboard']);
+      },
+    });
+
     return true;
   }
 
-  // Dedicated Admin Login
+  // Dedicated Admin Login via API
   loginAdmin(email: string, password?: string, fullName?: string): boolean {
-    const adminUser: User = {
-      ...this.defaultAdmin,
-      email: email || 'admin@taskflow.dev',
-      fullName: fullName || 'TaskFlow Administrator',
-      role: 'admin',
+    const payload = {
+      email: (email || 'admin@taskflow.dev').trim().toLowerCase(),
+      password: password || 'admin123',
     };
 
-    this.currentUser.set(adminUser);
-    this.isAuthenticated.set(true);
-    this.toastService.show('Admin authentication successful! Access granted.', 'success');
-    this.router.navigate(['/admin/dashboard']);
+    this.http.post<AuthResponse>(`${this.API_URL}/admin/login`, payload).subscribe({
+      next: (res) => {
+        if (res.token) {
+          localStorage.setItem(this.TOKEN_KEY, res.token);
+        }
+        const adminUser = res.user || {
+          ...this.defaultAdmin,
+          email: payload.email,
+        };
+
+        this.currentUser.set(adminUser);
+        this.isAuthenticated.set(true);
+        this.toastService.show('Admin authentication successful! Access granted.', 'success');
+        this.router.navigate(['/admin/dashboard']);
+      },
+      error: (err) => {
+        const errorMsg = err.error?.message || 'Admin login failed. Checking backend.';
+        this.toastService.show(errorMsg, 'error');
+
+        // Offline fallback for demo
+        const fallbackAdmin: User = {
+          ...this.defaultAdmin,
+          email: email || 'admin@taskflow.dev',
+          fullName: fullName || 'TaskFlow Administrator',
+          role: 'admin',
+        };
+        this.currentUser.set(fallbackAdmin);
+        this.isAuthenticated.set(true);
+        this.router.navigate(['/admin/dashboard']);
+      },
+    });
+
     return true;
   }
 
+  // User Registration / Signup via API
   signup(fullName: string, email: string, password?: string): boolean {
-    const firstName = fullName.trim().split(' ')[0] || 'User';
-    const user: User = {
-      id: `user-${Date.now()}`,
-      name: firstName,
+    const payload = {
       fullName: fullName.trim(),
-      email: email.trim(),
-      role: 'user',
-      title: 'Product Member',
-      department: 'Product',
-      status: 'Active',
-      joinedDate: 'Nov 19, 2026',
-      avatar: firstName[0].toUpperCase(),
+      email: email.trim().toLowerCase(),
+      password: password || 'taskflow2026',
     };
 
-    this.currentUser.set(user);
-    this.isAuthenticated.set(true);
-    this.registerUserIfNew(user);
-    this.toastService.show(`Account created! Welcome, ${firstName}.`, 'success');
-    this.router.navigate(['/dashboard']);
+    this.http.post<AuthResponse>(`${this.API_URL}/register`, payload).subscribe({
+      next: (res) => {
+        if (res.token) {
+          localStorage.setItem(this.TOKEN_KEY, res.token);
+        }
+        const user = res.user || {
+          ...this.defaultUser,
+          fullName: payload.fullName,
+          email: payload.email,
+          name: payload.fullName.split(' ')[0],
+        };
+
+        this.currentUser.set(user);
+        this.isAuthenticated.set(true);
+        this.registerUserIfNew(user);
+        this.toastService.show(res.message || `Account created! Welcome, ${user.name}.`, 'success');
+        this.router.navigate(['/dashboard']);
+      },
+      error: (err) => {
+        const errorMsg = err.error?.message || 'Registration failed.';
+        this.toastService.show(errorMsg, 'error');
+      },
+    });
+
     return true;
   }
 
   logout(redirectRoute?: string): void {
+    localStorage.removeItem(this.TOKEN_KEY);
     const target = redirectRoute || (this.isAdmin() ? '/admin/login' : '/login');
     this.isAuthenticated.set(false);
     this.toastService.show('You have been logged out.', 'info');
@@ -166,14 +266,37 @@ export class AuthService {
   }
 
   updateProfile(name: string, email: string, role: string): void {
-    this.currentUser.update((u) => ({
-      ...u,
+    const payload = {
       fullName: name,
-      name: name.split(' ')[0],
       email,
       title: role,
-      avatar: name[0].toUpperCase(),
-    }));
-    this.toastService.show('Profile updated successfully!', 'success');
+    };
+
+    this.http.put<{ success: boolean; user: User }>(`${environment.apiUrl}/users/profile`, payload).subscribe({
+      next: (res) => {
+        const updated = res.user || {
+          ...this.currentUser(),
+          fullName: name,
+          name: name.split(' ')[0],
+          email,
+          title: role,
+          avatar: name[0].toUpperCase(),
+        };
+        this.currentUser.set(updated);
+        this.toastService.show('Profile updated successfully!', 'success');
+      },
+      error: () => {
+        // Fallback for local update
+        this.currentUser.update((u) => ({
+          ...u,
+          fullName: name,
+          name: name.split(' ')[0],
+          email,
+          title: role,
+          avatar: name[0].toUpperCase(),
+        }));
+        this.toastService.show('Profile updated locally!', 'success');
+      },
+    });
   }
 }

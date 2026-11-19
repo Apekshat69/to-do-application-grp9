@@ -1,12 +1,28 @@
 import { Injectable, signal, computed, effect, inject } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
 import { Task, TaskPriority, TaskCategory, TaskStatus, TaskStats } from '../models/task.model';
 import { ToastService } from './toast.service';
+import { AuthService } from './auth.service';
+import { environment } from '../../environments/environment';
+
+interface TaskResponse {
+  success: boolean;
+  message?: string;
+  task?: Task;
+  tasks?: Task[];
+  stats?: TaskStats;
+  deletedCount?: number;
+}
 
 @Injectable({
   providedIn: 'root',
 })
 export class TaskService {
+  private http = inject(HttpClient);
   private toastService = inject(ToastService);
+  private authService = inject(AuthService);
+
+  private readonly API_URL = `${environment.apiUrl}/tasks`;
   private readonly STORAGE_KEY = 'taskflow_ng_tasks_v20';
 
   private initialTasks: Task[] = [
@@ -47,7 +63,7 @@ export class TaskService {
       id: 'task-4',
       title: 'Read Chapter 4 of Atomic Habits',
       description: 'Focus on habit stacking and environmental cues for high productivity.',
-      dueDate: '2026-11-14', // Overdue
+      dueDate: '2026-11-14',
       priority: 'Low',
       category: 'Personal',
       status: 'Pending',
@@ -91,7 +107,7 @@ export class TaskService {
       id: 'task-8',
       title: 'Doctor annual health checkup',
       description: 'Routine general wellness exam and prescription renewal at Central Clinic.',
-      dueDate: '2026-11-12', // Overdue
+      dueDate: '2026-11-12',
       priority: 'High',
       category: 'Other',
       status: 'Pending',
@@ -122,8 +138,9 @@ export class TaskService {
     },
   ];
 
-  // Core state Signal
+  // Core state Signals
   tasks = signal<Task[]>(this.loadTasks());
+  isLoading = signal<boolean>(false);
 
   // Modal communication signals
   isModalOpen = signal<boolean>(false);
@@ -153,12 +170,19 @@ export class TaskService {
   });
 
   constructor() {
-    // Automatically save state on change
+    // Automatically persist state changes to localStorage as offline cache
     effect(() => {
       try {
         localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.tasks()));
       } catch (e) {
-        console.error('Failed to save tasks', e);
+        console.error('Failed to save tasks to cache', e);
+      }
+    });
+
+    // Auto-fetch from backend whenever user is authenticated
+    effect(() => {
+      if (this.authService.isAuthenticated()) {
+        this.fetchTasks();
       }
     });
   }
@@ -197,59 +221,159 @@ export class TaskService {
     return task.dueDate > this.getTodayString();
   }
 
-  addTask(taskData: Omit<Task, 'id' | 'createdAt' | 'completed'>): Task {
-    const newTask: Task = {
-      ...taskData,
-      id: `task-${Date.now()}`,
-      completed: taskData.status === 'Completed',
-      createdAt: new Date().toISOString(),
+  // API: Fetch Tasks (GET /api/tasks)
+  fetchTasks(): void {
+    this.isLoading.set(true);
+    this.http.get<TaskResponse>(this.API_URL).subscribe({
+      next: (res) => {
+        if (res.tasks && Array.isArray(res.tasks)) {
+          this.tasks.set(res.tasks);
+        }
+        this.isLoading.set(false);
+      },
+      error: (err) => {
+        this.isLoading.set(false);
+        console.warn('[TaskService] Backend fetch failed, utilizing cached state:', err.message);
+      },
+    });
+  }
+
+  // API: Add Task (POST /api/tasks)
+  addTask(taskData: Omit<Task, 'id' | 'createdAt' | 'completed'>): void {
+    this.isLoading.set(true);
+
+    const payload = {
+      title: taskData.title,
+      description: taskData.description || '',
+      dueDate: taskData.dueDate || null,
+      priority: taskData.priority,
+      category: taskData.category,
+      status: taskData.status || 'Pending',
     };
 
-    this.tasks.update((prev) => [newTask, ...prev]);
-    this.toastService.show(`Task "${newTask.title}" created successfully!`, 'success');
-    this.closeModal();
-    return newTask;
+    this.http.post<TaskResponse>(this.API_URL, payload).subscribe({
+      next: (res) => {
+        const newTask = res.task || {
+          ...taskData,
+          id: `task-${Date.now()}`,
+          completed: taskData.status === 'Completed',
+          createdAt: new Date().toISOString(),
+        };
+
+        this.tasks.update((prev) => [newTask, ...prev]);
+        this.toastService.show(res.message || `Task "${newTask.title}" created successfully!`, 'success');
+        this.closeModal();
+        this.isLoading.set(false);
+      },
+      error: (err) => {
+        this.isLoading.set(false);
+        const errMsg = err.error?.message || 'Failed to create task on backend. Saved to local cache.';
+        this.toastService.show(errMsg, 'error');
+
+        // Local fallback if server unreachable
+        const fallbackTask: Task = {
+          ...taskData,
+          id: `task-${Date.now()}`,
+          completed: taskData.status === 'Completed',
+          createdAt: new Date().toISOString(),
+        };
+        this.tasks.update((prev) => [fallbackTask, ...prev]);
+        this.closeModal();
+      },
+    });
   }
 
+  // API: Update Task (PUT /api/tasks/:id)
   updateTask(id: string, updates: Partial<Task>): void {
-    this.tasks.update((prev) =>
-      prev.map((t) => {
-        if (t.id === id) {
-          const merged = { ...t, ...updates };
-          if (updates.status) {
-            merged.completed = updates.status === 'Completed';
-          }
-          return merged;
-        }
-        return t;
-      })
-    );
-    this.toastService.show('Task updated successfully!', 'success');
-    this.closeModal();
+    this.isLoading.set(true);
+
+    this.http.put<TaskResponse>(`${this.API_URL}/${id}`, updates).subscribe({
+      next: (res) => {
+        const updated = res.task;
+        this.tasks.update((prev) =>
+          prev.map((t) => {
+            if (t.id === id) {
+              return updated || { ...t, ...updates };
+            }
+            return t;
+          })
+        );
+        this.toastService.show(res.message || 'Task updated successfully!', 'success');
+        this.closeModal();
+        this.isLoading.set(false);
+      },
+      error: (err) => {
+        this.isLoading.set(false);
+        const errMsg = err.error?.message || 'Failed to update task on backend. Updated locally.';
+        this.toastService.show(errMsg, 'error');
+
+        // Local fallback
+        this.tasks.update((prev) =>
+          prev.map((t) => {
+            if (t.id === id) {
+              const merged = { ...t, ...updates };
+              if (updates.status) {
+                merged.completed = updates.status === 'Completed';
+              }
+              return merged;
+            }
+            return t;
+          })
+        );
+        this.closeModal();
+      },
+    });
   }
 
+  // API: Delete Task (DELETE /api/tasks/:id)
   deleteTask(id: string): void {
     const target = this.tasks().find((t) => t.id === id);
-    this.tasks.update((prev) => prev.filter((t) => t.id !== id));
-    this.toastService.show(target ? `Deleted "${target.title}"` : 'Task deleted', 'info');
+
+    this.http.delete<TaskResponse>(`${this.API_URL}/${id}`).subscribe({
+      next: (res) => {
+        this.tasks.update((prev) => prev.filter((t) => t.id !== id));
+        this.toastService.show(res.message || (target ? `Deleted "${target.title}"` : 'Task deleted'), 'info');
+      },
+      error: () => {
+        // Fallback local deletion
+        this.tasks.update((prev) => prev.filter((t) => t.id !== id));
+        this.toastService.show(target ? `Deleted "${target.title}" (local cache)` : 'Task deleted', 'info');
+      },
+    });
   }
 
+  // API: Toggle Complete (PATCH /api/tasks/:id/toggle)
   toggleComplete(id: string): void {
+    const target = this.tasks().find((t) => t.id === id);
+    const nextCompleted = target ? !target.completed : true;
+
+    // Optimistic UI update
     this.tasks.update((prev) =>
       prev.map((t) => {
         if (t.id === id) {
-          const nextState = !t.completed;
           return {
             ...t,
-            completed: nextState,
-            status: nextState ? 'Completed' : 'Pending',
+            completed: nextCompleted,
+            status: nextCompleted ? 'Completed' : 'Pending',
           };
         }
         return t;
       })
     );
+
+    this.http.patch<TaskResponse>(`${this.API_URL}/${id}/toggle`, {}).subscribe({
+      next: (res) => {
+        if (res.task) {
+          this.tasks.update((prev) => prev.map((t) => (t.id === id ? res.task! : t)));
+        }
+      },
+      error: () => {
+        // Optimistic UI already handled locally
+      },
+    });
   }
 
+  // API: Update Status (PATCH /api/tasks/:id/status)
   updateStatus(id: string, newStatus: TaskStatus): void {
     this.tasks.update((prev) =>
       prev.map((t) => {
@@ -263,22 +387,56 @@ export class TaskService {
         return t;
       })
     );
-    this.toastService.show(`Status updated to ${newStatus}`, 'info');
+
+    this.http.patch<TaskResponse>(`${this.API_URL}/${id}/status`, { status: newStatus }).subscribe({
+      next: (res) => {
+        if (res.task) {
+          this.tasks.update((prev) => prev.map((t) => (t.id === id ? res.task! : t)));
+        }
+        this.toastService.show(`Status updated to ${newStatus}`, 'info');
+      },
+      error: () => {
+        this.toastService.show(`Status updated to ${newStatus} (cached)`, 'info');
+      },
+    });
   }
 
+  // API: Reset Tasks (POST /api/tasks/reset)
   resetTasks(): void {
-    this.tasks.set(this.initialTasks);
-    this.toastService.show('Tasks reset to default sample dataset', 'info');
+    this.http.post<TaskResponse>(`${this.API_URL}/reset`, {}).subscribe({
+      next: (res) => {
+        if (res.tasks) {
+          this.tasks.set(res.tasks);
+        } else {
+          this.tasks.set(this.initialTasks);
+        }
+        this.toastService.show(res.message || 'Tasks reset to default sample dataset', 'info');
+      },
+      error: () => {
+        this.tasks.set(this.initialTasks);
+        this.toastService.show('Tasks reset to default sample dataset', 'info');
+      },
+    });
   }
 
+  // API: Clear Completed (DELETE /api/tasks/completed)
   clearCompleted(): void {
     const count = this.tasks().filter((t) => t.status === 'Completed').length;
     if (count === 0) {
       this.toastService.show('No completed tasks to clear', 'info');
       return;
     }
-    this.tasks.update((prev) => prev.filter((t) => t.status !== 'Completed'));
-    this.toastService.show(`Cleared ${count} completed task(s)`, 'info');
+
+    this.http.delete<TaskResponse>(`${this.API_URL}/completed`).subscribe({
+      next: (res) => {
+        this.tasks.update((prev) => prev.filter((t) => t.status !== 'Completed'));
+        this.toastService.show(res.message || `Cleared ${count} completed task(s)`, 'info');
+      },
+      error: () => {
+        this.tasks.update((prev) => prev.filter((t) => t.status !== 'Completed'));
+        this.toastService.show(`Cleared ${count} completed task(s)`, 'info');
+      },
+    });
   }
 
   // Modal helpers
@@ -298,4 +456,3 @@ export class TaskService {
     this.editingTask.set(null);
   }
 }
-

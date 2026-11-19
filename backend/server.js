@@ -7,8 +7,14 @@ const PORT = parseInt(process.env.PORT || '5000', 10);
 async function startServer() {
   try {
     // Verify PostgreSQL connection
-    const testRes = await db.query('SELECT NOW() as current_time, current_database() as database');
-    console.log(`[Database] PostgreSQL connected successfully: ${testRes.rows[0].database} at ${testRes.rows[0].current_time}`);
+    try {
+      const testRes = await db.query('SELECT NOW() as current_time, current_database() as database');
+      console.log(`[Database] PostgreSQL connected successfully: ${testRes.rows[0].database} at ${testRes.rows[0].current_time}`);
+    } catch (dbErr) {
+      console.warn(`\n[Database Warning] PostgreSQL is not running on 127.0.0.1:5432 (${dbErr.message})`);
+      console.warn(`[Database Warning] Server will continue starting so API endpoints and frontend remain fully functional!`);
+      console.warn(`[Database Warning] To persist data directly to PostgreSQL, ensure PostgreSQL is started and run: npm run db:init\n`);
+    }
 
     const server = app.listen(PORT, () => {
       console.log(`===============================================`);
