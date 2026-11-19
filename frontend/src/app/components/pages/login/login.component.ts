@@ -1,5 +1,6 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterModule } from '@angular/router';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AuthService } from '../../../services/auth.service';
 import { ToastService } from '../../../services/toast.service';
@@ -7,7 +8,7 @@ import { ToastService } from '../../../services/toast.service';
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
+  imports: [CommonModule, RouterModule, ReactiveFormsModule],
   template: `
     <div class="min-h-screen bg-[#F8F7FD] flex flex-col justify-center items-center p-4 sm:p-6 lg:p-8 select-none relative overflow-hidden">
       <!-- Ambient Purple Glows -->
@@ -17,19 +18,15 @@ import { ToastService } from '../../../services/toast.service';
       <div class="relative z-10 w-full max-w-md">
         <!-- Main Card -->
         <div class="bg-white rounded-3xl border border-gray-200/80 shadow-xl shadow-purple-500/5 p-6 sm:p-8 backdrop-blur-md">
-          <!-- Brand Header -->
+          <!-- Brand Header with Official TaskFlow Logo -->
           <div class="flex flex-col items-center text-center mb-6">
-            <div class="w-14 h-14 rounded-2xl bg-[#5243E4] flex items-center justify-center text-white shadow-lg shadow-purple-500/25 mb-3.5 transition-transform hover:scale-105 duration-200">
-              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3.2" d="M5 13l4 4L19 7"></path>
-              </svg>
-            </div>
+            <img
+              src="assets/images/taskflow-logo.png"
+              alt="TaskFlow - Organize. Achieve. Connect."
+              class="h-24 sm:h-28 w-auto object-contain mx-auto mb-2 select-none"
+            />
 
-            <h1 class="text-2xl font-extrabold tracking-tight text-[#1E1B4B]">
-              Task<span class="text-[#5243E4]">Flow</span>
-            </h1>
-
-            <h2 class="text-xl font-bold text-[#1E1B4B] mt-3">
+            <h2 class="text-xl font-bold text-[#1E1B4B] mt-1">
               {{ isSignUp ? 'Create an account' : 'Welcome back!' }}
             </h2>
             <p class="text-xs text-gray-500 mt-1">
@@ -179,26 +176,38 @@ import { ToastService } from '../../../services/toast.service';
         </div>
 
         <!-- Footer Toggle -->
-        <div class="text-center mt-5 text-xs text-gray-500 font-medium">
-          @if (isSignUp) {
-            Already have an account?
-            <button
-              type="button"
-              (click)="isSignUp = false"
-              class="font-bold text-[#5243E4] hover:underline cursor-pointer ml-1"
+        <div class="text-center mt-5 text-xs text-gray-500 font-medium space-y-2">
+          <div>
+            @if (isSignUp) {
+              Already have an account?
+              <button
+                type="button"
+                (click)="isSignUp = false"
+                class="font-bold text-[#5243E4] hover:underline cursor-pointer ml-1"
+              >
+                Sign In
+              </button>
+            } @else {
+              Don't have an account?
+              <button
+                type="button"
+                (click)="isSignUp = true"
+                class="font-bold text-[#5243E4] hover:underline cursor-pointer ml-1"
+              >
+                Create an account
+              </button>
+            }
+          </div>
+
+          <div class="pt-2 border-t border-gray-100">
+            <span class="text-gray-400">System Administrator?</span>
+            <a
+              routerLink="/admin/login"
+              class="font-bold text-[#5243E4] hover:underline ml-1 cursor-pointer"
             >
-              Sign In
-            </button>
-          } @else {
-            Don't have an account?
-            <button
-              type="button"
-              (click)="isSignUp = true"
-              class="font-bold text-[#5243E4] hover:underline cursor-pointer ml-1"
-            >
-              Create an account
-            </button>
-          }
+              Go to Admin Portal &rarr;
+            </a>
+          </div>
         </div>
       </div>
     </div>

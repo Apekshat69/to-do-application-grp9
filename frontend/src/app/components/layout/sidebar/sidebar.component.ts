@@ -24,18 +24,15 @@ import { TaskCategory } from '../../../models/task.model';
       [ngClass]="isOpen ? 'translate-x-0' : '-translate-x-full'"
     >
       <div class="flex flex-col h-full overflow-y-auto no-scrollbar">
-        <!-- Brand Header -->
-        <div class="p-5 border-b border-gray-100 flex items-center justify-between">
-          <div class="flex items-center gap-2.5">
-            <div class="w-8 h-8 rounded-xl bg-[#5243E4] flex items-center justify-center text-white shadow-md shadow-[#5243E4]/20">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3.2" d="M5 13l4 4L19 7"></path>
-              </svg>
-            </div>
-            <span class="text-xl font-extrabold tracking-tight text-[#1E1B4B]">
-              Task<span class="text-[#5243E4]">Flow</span>
-            </span>
-          </div>
+        <!-- Brand Header with Official TaskFlow Logo -->
+        <div class="p-4 px-5 border-b border-gray-100 flex items-center justify-between">
+          <a routerLink="/dashboard" class="flex items-center gap-2">
+            <img
+              src="assets/images/taskflow-logo.png"
+              alt="TaskFlow - Organize. Achieve. Connect."
+              class="h-10 sm:h-11 w-auto object-contain select-none"
+            />
+          </a>
 
           <button
             type="button"
@@ -177,6 +174,23 @@ import { TaskCategory } from '../../../models/task.model';
               {{ taskService.stats().completed }} of {{ taskService.stats().total }} tasks completed
             </p>
           </div>
+
+          <!-- Admin Portal Switch (Shown if current user has Admin role) -->
+          @if (authService.isAdmin()) {
+            <a
+              routerLink="/admin/overview"
+              (click)="close.emit()"
+              class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold text-purple-700 bg-purple-50 hover:bg-purple-100 transition-colors border border-purple-200"
+            >
+              <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                </svg>
+                <span>Admin Console</span>
+              </div>
+              <span class="text-[10px] uppercase font-bold text-purple-600">&rarr;</span>
+            </a>
+          }
 
           <!-- User Row with Sign Out -->
           <div class="flex items-center justify-between px-1 pt-1">

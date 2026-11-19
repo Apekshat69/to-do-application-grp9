@@ -12,6 +12,10 @@ export interface Task {
   status: TaskStatus;
   completed: boolean;
   createdAt: string;
+  userId?: string;
+  userName?: string;
+  userEmail?: string;
+  userAvatar?: string;
 }
 
 export interface TaskStats {
@@ -24,3 +28,12 @@ export interface TaskStats {
   progressPercentage: number;
 }
 
+export interface AdminStats {
+  totalUsers: number;
+  totalTasks: number;
+  pendingTasks: number;
+  inProgressTasks: number;
+  completedTasks: number;
+  overdueTasks: number;
+  overallCompletionRate: number;
+}
