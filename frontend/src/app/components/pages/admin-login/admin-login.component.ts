@@ -161,6 +161,10 @@ export class AdminLoginComponent {
   }
 
   onDemoAdminLogin(): void {
-    this.authService.loginAdmin('admin@taskflow.dev', 'admin123', 'TaskFlow Administrator');
+    this.adminForm.patchValue({
+      email: 'admin@taskflow.dev',
+      password: 'admin123',
+    });
+    this.authService.loginAdmin('admin@taskflow.dev', 'admin123');
   }
 }

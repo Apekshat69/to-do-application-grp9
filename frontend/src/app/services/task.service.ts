@@ -25,118 +25,7 @@ export class TaskService {
   private readonly API_URL = `${environment.apiUrl}/tasks`;
   private readonly STORAGE_KEY = 'taskflow_ng_tasks_v20';
 
-  private initialTasks: Task[] = [
-    {
-      id: 'task-1',
-      title: 'Finish project report',
-      description: 'Compile quarterly performance metrics, frontend benchmarks, and deliverables summary.',
-      dueDate: '2026-11-18',
-      priority: 'High',
-      category: 'Work',
-      status: 'In Progress',
-      completed: false,
-      createdAt: '2026-11-16T09:00:00Z',
-    },
-    {
-      id: 'task-2',
-      title: 'Study Angular 20 & signals architecture',
-      description: 'Review standalone component tree, signal stores, reactive forms, and routing guards.',
-      dueDate: '2026-11-18',
-      priority: 'Medium',
-      category: 'Study',
-      status: 'Completed',
-      completed: true,
-      createdAt: '2026-11-15T11:30:00Z',
-    },
-    {
-      id: 'task-3',
-      title: 'Go for a 30-minute evening walk',
-      description: 'Refresh and take a break around the community park after the afternoon sprint.',
-      dueDate: '2026-11-19',
-      priority: 'Low',
-      category: 'Personal',
-      status: 'Pending',
-      completed: false,
-      createdAt: '2026-11-17T14:20:00Z',
-    },
-    {
-      id: 'task-4',
-      title: 'Read Chapter 4 of Atomic Habits',
-      description: 'Focus on habit stacking and environmental cues for high productivity.',
-      dueDate: '2026-11-14',
-      priority: 'Low',
-      category: 'Personal',
-      status: 'Pending',
-      completed: false,
-      createdAt: '2026-11-10T10:00:00Z',
-    },
-    {
-      id: 'task-5',
-      title: 'Plan sprint deliverables',
-      description: 'Map out roadmap milestones, team priorities, and ticket estimates.',
-      dueDate: '2026-11-20',
-      priority: 'Medium',
-      category: 'Work',
-      status: 'Pending',
-      completed: false,
-      createdAt: '2026-11-17T16:45:00Z',
-    },
-    {
-      id: 'task-6',
-      title: 'Review team pull requests',
-      description: 'Inspect UI component refactoring, accessibility labels, and responsive layout styling.',
-      dueDate: '2026-11-18',
-      priority: 'High',
-      category: 'Work',
-      status: 'Completed',
-      completed: true,
-      createdAt: '2026-11-17T08:30:00Z',
-    },
-    {
-      id: 'task-7',
-      title: 'Data Structures practice set',
-      description: 'Solve 3 graph traversal and dynamic programming algorithmic challenges.',
-      dueDate: '2026-11-21',
-      priority: 'Medium',
-      category: 'Study',
-      status: 'In Progress',
-      completed: false,
-      createdAt: '2026-11-16T18:00:00Z',
-    },
-    {
-      id: 'task-8',
-      title: 'Doctor annual health checkup',
-      description: 'Routine general wellness exam and prescription renewal at Central Clinic.',
-      dueDate: '2026-11-12',
-      priority: 'High',
-      category: 'Other',
-      status: 'Pending',
-      completed: false,
-      createdAt: '2026-11-08T12:00:00Z',
-    },
-    {
-      id: 'task-9',
-      title: 'Clean workspace desk setup',
-      description: 'Organize monitor cables, wipe keyboard, and declutter physical notebooks.',
-      dueDate: '2026-11-19',
-      priority: 'Low',
-      category: 'Other',
-      status: 'Completed',
-      completed: true,
-      createdAt: '2026-11-17T19:15:00Z',
-    },
-    {
-      id: 'task-10',
-      title: 'Prepare demo architecture presentation',
-      description: 'Synthesize architecture diagrams, feature flowcharts, and component hierarchy.',
-      dueDate: '2026-11-22',
-      priority: 'High',
-      category: 'Work',
-      status: 'In Progress',
-      completed: false,
-      createdAt: '2026-11-18T09:30:00Z',
-    },
-  ];
+  private initialTasks: Task[] = [];
 
   // Core state Signals
   tasks = signal<Task[]>(this.loadTasks());
@@ -170,33 +59,42 @@ export class TaskService {
   });
 
   constructor() {
-    // Automatically persist state changes to localStorage as offline cache
+    // Automatically persist state changes to user-scoped localStorage cache
     effect(() => {
       try {
-        localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.tasks()));
+        const user = this.authService.currentUser();
+        if (user?.id) {
+          localStorage.setItem(`taskflow_ng_tasks_${user.id}`, JSON.stringify(this.tasks()));
+        }
       } catch (e) {
         console.error('Failed to save tasks to cache', e);
       }
     });
 
-    // Auto-fetch from backend whenever user is authenticated
+    // Auto-fetch from backend whenever user is authenticated, or clear on logout
     effect(() => {
-      if (this.authService.isAuthenticated()) {
+      const isAuth = this.authService.isAuthenticated();
+      const user = this.authService.currentUser();
+      if (isAuth && user?.id) {
         this.fetchTasks();
+      } else {
+        this.tasks.set([]);
       }
     });
   }
 
   private loadTasks(): Task[] {
     try {
-      const saved = localStorage.getItem(this.STORAGE_KEY);
+      const user = this.authService.currentUser();
+      if (!user?.id) return [];
+      const saved = localStorage.getItem(`taskflow_ng_tasks_${user.id}`);
       if (saved) {
         return JSON.parse(saved);
       }
     } catch (e) {
       console.error('Failed to load tasks from localStorage', e);
     }
-    return this.initialTasks;
+    return [];
   }
 
   getTodayString(): string {
@@ -221,19 +119,25 @@ export class TaskService {
     return task.dueDate > this.getTodayString();
   }
 
-  // API: Fetch Tasks (GET /api/tasks)
+  // API: Fetch Tasks (GET /api/tasks or /api/admin/tasks)
   fetchTasks(): void {
     this.isLoading.set(true);
-    this.http.get<TaskResponse>(this.API_URL).subscribe({
+    const url = this.authService.isAdmin()
+      ? `${environment.apiUrl}/admin/tasks`
+      : this.API_URL;
+
+    this.http.get<TaskResponse>(url).subscribe({
       next: (res) => {
         if (res.tasks && Array.isArray(res.tasks)) {
           this.tasks.set(res.tasks);
+        } else {
+          this.tasks.set([]);
         }
         this.isLoading.set(false);
       },
       error: (err) => {
         this.isLoading.set(false);
-        console.warn('[TaskService] Backend fetch failed, utilizing cached state:', err.message);
+        console.warn('[TaskService] Backend fetch failed:', err.message);
       },
     });
   }
@@ -253,32 +157,17 @@ export class TaskService {
 
     this.http.post<TaskResponse>(this.API_URL, payload).subscribe({
       next: (res) => {
-        const newTask = res.task || {
-          ...taskData,
-          id: `task-${Date.now()}`,
-          completed: taskData.status === 'Completed',
-          createdAt: new Date().toISOString(),
-        };
-
-        this.tasks.update((prev) => [newTask, ...prev]);
-        this.toastService.show(res.message || `Task "${newTask.title}" created successfully!`, 'success');
-        this.closeModal();
+        if (res.task) {
+          this.tasks.update((prev) => [res.task!, ...prev]);
+          this.toastService.show(res.message || `Task "${res.task.title}" created successfully!`, 'success');
+          this.closeModal();
+        }
         this.isLoading.set(false);
       },
       error: (err) => {
         this.isLoading.set(false);
-        const errMsg = err.error?.message || 'Failed to create task on backend. Saved to local cache.';
+        const errMsg = err.error?.message || 'Failed to create task on backend.';
         this.toastService.show(errMsg, 'error');
-
-        // Local fallback if server unreachable
-        const fallbackTask: Task = {
-          ...taskData,
-          id: `task-${Date.now()}`,
-          completed: taskData.status === 'Completed',
-          createdAt: new Date().toISOString(),
-        };
-        this.tasks.update((prev) => [fallbackTask, ...prev]);
-        this.closeModal();
       },
     });
   }
@@ -287,7 +176,16 @@ export class TaskService {
   updateTask(id: string, updates: Partial<Task>): void {
     this.isLoading.set(true);
 
-    this.http.put<TaskResponse>(`${this.API_URL}/${id}`, updates).subscribe({
+    const isAdmin = this.authService.isAdmin();
+    const url = isAdmin && updates.status
+      ? `${environment.apiUrl}/admin/tasks/${id}/status`
+      : `${this.API_URL}/${id}`;
+
+    const request$ = isAdmin && updates.status
+      ? this.http.patch<TaskResponse>(url, { status: updates.status })
+      : this.http.put<TaskResponse>(url, updates);
+
+    request$.subscribe({
       next: (res) => {
         const updated = res.task;
         this.tasks.update((prev) =>
@@ -304,23 +202,8 @@ export class TaskService {
       },
       error: (err) => {
         this.isLoading.set(false);
-        const errMsg = err.error?.message || 'Failed to update task on backend. Updated locally.';
+        const errMsg = err.error?.message || 'Failed to update task.';
         this.toastService.show(errMsg, 'error');
-
-        // Local fallback
-        this.tasks.update((prev) =>
-          prev.map((t) => {
-            if (t.id === id) {
-              const merged = { ...t, ...updates };
-              if (updates.status) {
-                merged.completed = updates.status === 'Completed';
-              }
-              return merged;
-            }
-            return t;
-          })
-        );
-        this.closeModal();
       },
     });
   }
@@ -328,16 +211,18 @@ export class TaskService {
   // API: Delete Task (DELETE /api/tasks/:id)
   deleteTask(id: string): void {
     const target = this.tasks().find((t) => t.id === id);
+    const url = this.authService.isAdmin()
+      ? `${environment.apiUrl}/admin/tasks/${id}`
+      : `${this.API_URL}/${id}`;
 
-    this.http.delete<TaskResponse>(`${this.API_URL}/${id}`).subscribe({
+    this.http.delete<TaskResponse>(url).subscribe({
       next: (res) => {
         this.tasks.update((prev) => prev.filter((t) => t.id !== id));
         this.toastService.show(res.message || (target ? `Deleted "${target.title}"` : 'Task deleted'), 'info');
       },
-      error: () => {
-        // Fallback local deletion
-        this.tasks.update((prev) => prev.filter((t) => t.id !== id));
-        this.toastService.show(target ? `Deleted "${target.title}" (local cache)` : 'Task deleted', 'info');
+      error: (err) => {
+        const errMsg = err.error?.message || 'Failed to delete task.';
+        this.toastService.show(errMsg, 'error');
       },
     });
   }
@@ -345,58 +230,43 @@ export class TaskService {
   // API: Toggle Complete (PATCH /api/tasks/:id/toggle)
   toggleComplete(id: string): void {
     const target = this.tasks().find((t) => t.id === id);
-    const nextCompleted = target ? !target.completed : true;
-
-    // Optimistic UI update
-    this.tasks.update((prev) =>
-      prev.map((t) => {
-        if (t.id === id) {
-          return {
-            ...t,
-            completed: nextCompleted,
-            status: nextCompleted ? 'Completed' : 'Pending',
-          };
-        }
-        return t;
-      })
-    );
+    if (!target) return;
+    const nextCompleted = !target.completed;
+    const nextStatus = nextCompleted ? 'Completed' : 'Pending';
 
     this.http.patch<TaskResponse>(`${this.API_URL}/${id}/toggle`, {}).subscribe({
       next: (res) => {
         if (res.task) {
           this.tasks.update((prev) => prev.map((t) => (t.id === id ? res.task! : t)));
+        } else {
+          this.tasks.update((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, completed: nextCompleted, status: nextStatus } : t))
+          );
         }
       },
-      error: () => {
-        // Optimistic UI already handled locally
+      error: (err) => {
+        const errMsg = err.error?.message || 'Failed to toggle status.';
+        this.toastService.show(errMsg, 'error');
       },
     });
   }
 
   // API: Update Status (PATCH /api/tasks/:id/status)
   updateStatus(id: string, newStatus: TaskStatus): void {
-    this.tasks.update((prev) =>
-      prev.map((t) => {
-        if (t.id === id) {
-          return {
-            ...t,
-            status: newStatus,
-            completed: newStatus === 'Completed',
-          };
-        }
-        return t;
-      })
-    );
-
     this.http.patch<TaskResponse>(`${this.API_URL}/${id}/status`, { status: newStatus }).subscribe({
       next: (res) => {
         if (res.task) {
           this.tasks.update((prev) => prev.map((t) => (t.id === id ? res.task! : t)));
+        } else {
+          this.tasks.update((prev) =>
+            prev.map((t) => (t.id === id ? { ...t, status: newStatus, completed: newStatus === 'Completed' } : t))
+          );
         }
         this.toastService.show(`Status updated to ${newStatus}`, 'info');
       },
-      error: () => {
-        this.toastService.show(`Status updated to ${newStatus} (cached)`, 'info');
+      error: (err) => {
+        const errMsg = err.error?.message || 'Failed to update status.';
+        this.toastService.show(errMsg, 'error');
       },
     });
   }
@@ -408,13 +278,13 @@ export class TaskService {
         if (res.tasks) {
           this.tasks.set(res.tasks);
         } else {
-          this.tasks.set(this.initialTasks);
+          this.tasks.set([]);
         }
-        this.toastService.show(res.message || 'Tasks reset to default sample dataset', 'info');
+        this.toastService.show(res.message || 'Tasks reset', 'info');
       },
-      error: () => {
-        this.tasks.set(this.initialTasks);
-        this.toastService.show('Tasks reset to default sample dataset', 'info');
+      error: (err) => {
+        const errMsg = err.error?.message || 'Failed to reset tasks.';
+        this.toastService.show(errMsg, 'error');
       },
     });
   }
@@ -432,9 +302,9 @@ export class TaskService {
         this.tasks.update((prev) => prev.filter((t) => t.status !== 'Completed'));
         this.toastService.show(res.message || `Cleared ${count} completed task(s)`, 'info');
       },
-      error: () => {
-        this.tasks.update((prev) => prev.filter((t) => t.status !== 'Completed'));
-        this.toastService.show(`Cleared ${count} completed task(s)`, 'info');
+      error: (err) => {
+        const errMsg = err.error?.message || 'Failed to clear completed tasks.';
+        this.toastService.show(errMsg, 'error');
       },
     });
   }

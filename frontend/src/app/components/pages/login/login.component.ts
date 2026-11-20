@@ -232,21 +232,22 @@ export class LoginComponent {
 
     const { fullName, email, password } = this.authForm.value;
     if (this.isSignUp) {
-      this.authService.signup(fullName || 'Alex Morgan', email, password);
+      this.authService.signup(fullName || 'User', email, password);
     } else {
       this.authService.login(email, password);
     }
   }
 
   onDemoLogin(): void {
-    this.authService.login('alex.morgan@taskflow.dev', 'taskflow2026', 'Alex Morgan');
+    this.authForm.patchValue({
+      email: 'alex.morgan@taskflow.dev',
+      password: 'taskflow2026',
+    });
+    this.authService.login('alex.morgan@taskflow.dev', 'taskflow2026');
   }
 
   onGoogleLogin(): void {
-    this.toastService.show('Connecting with Google (Frontend UI Demo)...', 'info');
-    setTimeout(() => {
-      this.authService.login('alex.google@taskflow.dev', 'googledemo', 'Alex Morgan');
-    }, 500);
+    this.toastService.show('Google Sign-In is not configured yet. Please sign in with email and password.', 'info');
   }
 
   onForgotPassword(): void {

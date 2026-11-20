@@ -26,30 +26,17 @@ export class AuthService {
   private readonly USER_KEY = 'taskflow_ng_user';
   private readonly USERS_LIST_KEY = 'taskflow_ng_registered_users';
 
-  private defaultUser: User = {
-    id: 'user-1',
-    name: 'Alex',
-    fullName: 'Alex Morgan',
-    email: 'alex.morgan@taskflow.dev',
+  private emptyUser: User = {
+    id: '',
+    name: '',
+    fullName: '',
+    email: '',
     role: 'user',
-    title: 'Frontend Developer',
-    department: 'Engineering',
+    title: '',
+    department: '',
     status: 'Active',
-    joinedDate: 'Jan 15, 2026',
-    avatar: 'A',
-  };
-
-  private defaultAdmin: User = {
-    id: 'admin-1',
-    name: 'Admin',
-    fullName: 'TaskFlow Administrator',
-    email: 'admin@taskflow.dev',
-    role: 'admin',
-    title: 'System Administrator',
-    department: 'Operations',
-    status: 'Active',
-    joinedDate: 'Oct 01, 2025',
-    avatar: 'AD',
+    joinedDate: '',
+    avatar: '',
   };
 
   currentUser = signal<User>(this.loadUser());
@@ -81,19 +68,23 @@ export class AuthService {
 
   private loadAuth(): boolean {
     try {
+      const token = localStorage.getItem(this.TOKEN_KEY);
       const saved = localStorage.getItem(this.AUTH_KEY);
-      return saved !== null ? JSON.parse(saved) : true;
+      return Boolean(token && saved && JSON.parse(saved) === true);
     } catch {
-      return true;
+      return false;
     }
   }
 
   private loadUser(): User {
     try {
-      const saved = localStorage.getItem(this.USER_KEY);
-      if (saved) return JSON.parse(saved);
+      const token = localStorage.getItem(this.TOKEN_KEY);
+      if (token) {
+        const saved = localStorage.getItem(this.USER_KEY);
+        if (saved) return JSON.parse(saved);
+      }
     } catch {}
-    return this.defaultUser;
+    return this.emptyUser;
   }
 
   private loadRegisteredUsers(): User[] {
@@ -101,10 +92,11 @@ export class AuthService {
       const saved = localStorage.getItem(this.USERS_LIST_KEY);
       if (saved) return JSON.parse(saved);
     } catch {}
-    return [this.defaultUser];
+    return [];
   }
 
   private registerUserIfNew(user: User): void {
+    if (!user || !user.email) return;
     this.registeredUsers.update((prev) => {
       if (!prev.some((u) => u.email.toLowerCase() === user.email.toLowerCase())) {
         return [...prev, user];
@@ -122,8 +114,10 @@ export class AuthService {
           this.registerUserIfNew(res.user);
         }
       },
-      error: () => {
-        // Token expired or server unreachable, maintain current offline fallback
+      error: (err) => {
+        if (err.status === 401 || err.status === 403) {
+          this.logout();
+        }
       },
     });
   }
@@ -132,48 +126,29 @@ export class AuthService {
   login(email: string, password?: string, fullName?: string): boolean {
     const payload = {
       email: email.trim().toLowerCase(),
-      password: password || 'taskflow2026',
+      password: password || '',
     };
 
     this.http.post<AuthResponse>(`${this.API_URL}/login`, payload).subscribe({
       next: (res) => {
-        if (res.token) {
+        if (res.token && res.user) {
           localStorage.setItem(this.TOKEN_KEY, res.token);
-        }
-        const user = res.user || {
-          ...this.defaultUser,
-          email,
-          fullName: fullName || email.split('@')[0],
-          name: fullName ? fullName.split(' ')[0] : email.split('@')[0],
-        };
+          this.currentUser.set(res.user);
+          this.isAuthenticated.set(true);
+          this.registerUserIfNew(res.user);
+          this.toastService.show(res.message || `Welcome back, ${res.user.name}!`, 'success');
 
-        this.currentUser.set(user);
-        this.isAuthenticated.set(true);
-        this.registerUserIfNew(user);
-        this.toastService.show(res.message || `Welcome back, ${user.name}!`, 'success');
-        this.router.navigate(['/dashboard']);
+          // Role-based dashboard redirection
+          if (res.user.role === 'admin') {
+            this.router.navigate(['/admin/dashboard']);
+          } else {
+            this.router.navigate(['/dashboard']);
+          }
+        }
       },
       error: (err) => {
-        const errorMsg = err.error?.message || 'Login failed. Please check backend server.';
+        const errorMsg = err.error?.message || 'Login failed. Invalid email or password.';
         this.toastService.show(errorMsg, 'error');
-
-        // Fallback for demo when backend is offline
-        const derivedName = fullName ? fullName.split(' ')[0] : email.split('@')[0];
-        const fallbackUser: User = {
-          id: `user-${Date.now()}`,
-          name: derivedName || 'Alex',
-          fullName: fullName || email.split('@')[0] || 'Alex Morgan',
-          email,
-          role: 'user',
-          title: 'Frontend Developer',
-          department: 'Engineering',
-          status: 'Active',
-          joinedDate: 'Jan 15, 2026',
-          avatar: (derivedName || 'A')[0].toUpperCase(),
-        };
-        this.currentUser.set(fallbackUser);
-        this.isAuthenticated.set(true);
-        this.router.navigate(['/dashboard']);
       },
     });
 
@@ -183,39 +158,24 @@ export class AuthService {
   // Dedicated Admin Login via API
   loginAdmin(email: string, password?: string, fullName?: string): boolean {
     const payload = {
-      email: (email || 'admin@taskflow.dev').trim().toLowerCase(),
-      password: password || 'admin123',
+      email: (email || '').trim().toLowerCase(),
+      password: password || '',
     };
 
     this.http.post<AuthResponse>(`${this.API_URL}/admin/login`, payload).subscribe({
       next: (res) => {
-        if (res.token) {
+        if (res.token && res.user) {
           localStorage.setItem(this.TOKEN_KEY, res.token);
+          this.currentUser.set(res.user);
+          this.isAuthenticated.set(true);
+          this.registerUserIfNew(res.user);
+          this.toastService.show(res.message || 'Admin authentication successful! Access granted.', 'success');
+          this.router.navigate(['/admin/dashboard']);
         }
-        const adminUser = res.user || {
-          ...this.defaultAdmin,
-          email: payload.email,
-        };
-
-        this.currentUser.set(adminUser);
-        this.isAuthenticated.set(true);
-        this.toastService.show('Admin authentication successful! Access granted.', 'success');
-        this.router.navigate(['/admin/dashboard']);
       },
       error: (err) => {
-        const errorMsg = err.error?.message || 'Admin login failed. Checking backend.';
+        const errorMsg = err.error?.message || 'Administrative login failed. Access denied.';
         this.toastService.show(errorMsg, 'error');
-
-        // Offline fallback for demo
-        const fallbackAdmin: User = {
-          ...this.defaultAdmin,
-          email: email || 'admin@taskflow.dev',
-          fullName: fullName || 'TaskFlow Administrator',
-          role: 'admin',
-        };
-        this.currentUser.set(fallbackAdmin);
-        this.isAuthenticated.set(true);
-        this.router.navigate(['/admin/dashboard']);
       },
     });
 
@@ -227,26 +187,19 @@ export class AuthService {
     const payload = {
       fullName: fullName.trim(),
       email: email.trim().toLowerCase(),
-      password: password || 'taskflow2026',
+      password: password || '',
     };
 
     this.http.post<AuthResponse>(`${this.API_URL}/register`, payload).subscribe({
       next: (res) => {
-        if (res.token) {
+        if (res.token && res.user) {
           localStorage.setItem(this.TOKEN_KEY, res.token);
+          this.currentUser.set(res.user);
+          this.isAuthenticated.set(true);
+          this.registerUserIfNew(res.user);
+          this.toastService.show(res.message || `Account created! Welcome, ${res.user.name}.`, 'success');
+          this.router.navigate(['/dashboard']);
         }
-        const user = res.user || {
-          ...this.defaultUser,
-          fullName: payload.fullName,
-          email: payload.email,
-          name: payload.fullName.split(' ')[0],
-        };
-
-        this.currentUser.set(user);
-        this.isAuthenticated.set(true);
-        this.registerUserIfNew(user);
-        this.toastService.show(res.message || `Account created! Welcome, ${user.name}.`, 'success');
-        this.router.navigate(['/dashboard']);
       },
       error: (err) => {
         const errorMsg = err.error?.message || 'Registration failed.';
@@ -258,9 +211,19 @@ export class AuthService {
   }
 
   logout(redirectRoute?: string): void {
+    const user = this.currentUser();
     localStorage.removeItem(this.TOKEN_KEY);
-    const target = redirectRoute || (this.isAdmin() ? '/admin/login' : '/login');
+    localStorage.removeItem(this.AUTH_KEY);
+    localStorage.removeItem(this.USER_KEY);
+    localStorage.removeItem('taskflow_ng_tasks_v20');
+    if (user?.id) {
+      localStorage.removeItem(`taskflow_ng_tasks_${user.id}`);
+    }
+
+    this.currentUser.set(this.emptyUser);
     this.isAuthenticated.set(false);
+
+    const target = redirectRoute || '/login';
     this.toastService.show('You have been logged out.', 'info');
     this.router.navigate([target]);
   }

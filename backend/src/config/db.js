@@ -239,11 +239,37 @@ function handleMemoryQuery(text, params = []) {
     return { rows: tasks };
   }
 
-  // Tasks: findById
+  // Tasks: findById (with optional user_id ownership check)
   if (q.includes('FROM tasks t') && q.includes('WHERE t.id = $1')) {
     const tid = parseInt(params[0], 10);
-    const task = memoryTasks.find((t) => t.id === tid);
+    let task = memoryTasks.find((t) => t.id === tid);
+    if (task && q.includes('AND t.user_id = $2') && params.length > 1) {
+      const uid = parseInt(params[1], 10);
+      if (task.user_id !== uid) {
+        task = null;
+      }
+    }
     return { rows: task ? [task] : [] };
+  }
+
+  // Admin Tasks: getAllTasksForAdmin
+  if (q.includes('FROM tasks t') && q.includes('WHERE 1=1')) {
+    let tasks = [...memoryTasks];
+    if (q.includes('AND t.user_id = $') && params.length > 0) {
+      const uid = parseInt(params[0], 10);
+      tasks = tasks.filter((t) => t.user_id === uid);
+    }
+    const populated = tasks.map((t) => {
+      const u = memoryUsers.find((user) => user.id === t.user_id);
+      return {
+        ...t,
+        user_name: u ? u.name : 'User',
+        user_full_name: u ? u.full_name : 'User',
+        user_email: u ? u.email : '',
+        user_avatar: u ? u.avatar : 'U',
+      };
+    });
+    return { rows: populated };
   }
 
   // Tasks: stats
@@ -291,26 +317,48 @@ function handleMemoryQuery(text, params = []) {
     return { rows: [newTask] };
   }
 
-  // Tasks: update
+  // Tasks: update (with strict user ownership verification)
   if (q.startsWith('UPDATE tasks SET')) {
-    const tid = parseInt(params[params.length - 2], 10);
-    const task = memoryTasks.find((t) => t.id === tid);
-    if (task) {
-      if (q.includes('status =')) {
-        task.status = params[0];
-      }
-      if (q.includes('title =')) {
-        task.title = params[0];
-      }
-      task.updated_at = new Date();
+    let tid;
+    let uid = null;
+    if (q.includes('AND user_id = $')) {
+      uid = parseInt(params[params.length - 1], 10);
+      tid = parseInt(params[params.length - 2], 10);
+    } else {
+      tid = parseInt(params[params.length - 1], 10);
     }
-    return { rows: task ? [task] : [] };
+
+    const task = memoryTasks.find((t) => t.id === tid);
+    if (!task || (uid !== null && task.user_id !== uid)) {
+      return { rows: [] };
+    }
+
+    const setPart = q.substring(q.indexOf('SET ') + 4, q.indexOf(' WHERE'));
+    const assignments = setPart.split(',').map((s) => s.trim());
+    let pIdx = 0;
+    for (const a of assignments) {
+      if (a.includes('=')) {
+        const [col, paramPlaceholder] = a.split('=').map((s) => s.trim());
+        if (paramPlaceholder && paramPlaceholder.startsWith('$')) {
+          const val = params[pIdx++];
+          if (col === 'title') task.title = val;
+          if (col === 'description') task.description = val;
+          if (col === 'status') task.status = val;
+          if (col === 'priority') task.priority = val;
+          if (col === 'due_date') task.due_date = val;
+          if (col === 'category_id') task.category_id = val;
+        }
+      }
+    }
+    task.updated_at = new Date();
+    return { rows: [{ id: task.id }] };
   }
 
-  // Tasks: delete
+  // Tasks: delete (with strict user ownership verification)
   if (q.startsWith('DELETE FROM tasks WHERE id = $1')) {
     const tid = parseInt(params[0], 10);
-    const idx = memoryTasks.findIndex((t) => t.id === tid);
+    const uid = (q.includes('AND user_id = $2') && params.length > 1) ? parseInt(params[1], 10) : null;
+    const idx = memoryTasks.findIndex((t) => t.id === tid && (uid === null || t.user_id === uid));
     if (idx !== -1) {
       const removed = memoryTasks.splice(idx, 1);
       return { rows: removed };

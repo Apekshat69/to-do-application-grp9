@@ -1,8 +1,10 @@
-import { Injectable, signal, computed, inject } from '@angular/core';
+import { Injectable, signal, computed, inject, effect } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
 import { User, UserTaskStats } from '../models/user.model';
 import { Task, TaskStatus, AdminStats } from '../models/task.model';
 import { TaskService } from './task.service';
 import { AuthService } from './auth.service';
+import { environment } from '../../environments/environment';
 
 export interface MonthlyActivityPoint {
   month: string;
@@ -22,12 +24,48 @@ export interface StatusSlice {
   providedIn: 'root',
 })
 export class AdminService {
+  private http = inject(HttpClient);
   private taskService = inject(TaskService);
   private authService = inject(AuthService);
 
   // Directly leverage real application tasks & users (No mock or fake data generated)
   tasks = computed<Task[]>(() => this.taskService.tasks());
   users = computed<User[]>(() => this.authService.registeredUsers());
+
+  constructor() {
+    effect(() => {
+      if (this.authService.isAuthenticated() && this.authService.isAdmin()) {
+        this.fetchAdminUsers();
+      }
+    });
+  }
+
+  fetchAdminUsers(): void {
+    this.http.get<{ success: boolean; users: any[] }>(`${environment.apiUrl}/admin/users`).subscribe({
+      next: (res) => {
+        if (res.users && Array.isArray(res.users)) {
+          const formatted: User[] = res.users.map((u: any) => ({
+            id: String(u.id),
+            name: u.name,
+            fullName: u.full_name || u.name,
+            email: u.email,
+            role: u.role || 'user',
+            title: u.title || 'Product Member',
+            department: u.department || 'Product',
+            status: u.status || 'Active',
+            joinedDate: u.created_at
+              ? new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+              : 'Jan 15, 2026',
+            avatar: u.avatar || (u.name ? u.name[0].toUpperCase() : 'U'),
+          }));
+          this.authService.registeredUsers.set(formatted);
+        }
+      },
+      error: (err) => {
+        console.warn('[AdminService] fetchAdminUsers failed:', err.message);
+      },
+    });
+  }
 
   getTodayString(): string {
     const now = new Date();

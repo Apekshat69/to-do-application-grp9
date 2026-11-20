@@ -7,7 +7,7 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "db:init": "node src/config/initDb.js",
-    "test": "node -e \"const db = require('./src/config/db'); const app = require('./src/app'); console.log('Backend smoke test passed'); process.exit(0);\""
+    "test": "node test-auth-tasks.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
