@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const db = require('./config/db');
 const { notFoundHandler, errorHandler } = require('./middleware/errorMiddleware');
 
 const authRoutes = require('./routes/authRoutes');
@@ -39,9 +40,11 @@ app.use(express.urlencoded({ extended: true }));
 
 // Health Check Endpoint
 app.get('/api/health', (req, res) => {
+  const dbStatus = typeof db.getDatabaseStatus === 'function' ? db.getDatabaseStatus() : { engine: 'PostgreSQL' };
   res.status(200).json({
     status: 'OK',
     service: 'TaskFlow REST API Backend',
+    database: dbStatus,
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
   });

@@ -2,27 +2,47 @@ const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
-let isPgAvailable = null; // null: unknown, true: connected, false: offline fallback
+const connectionString = process.env.DATABASE_URL;
 
-const pool = new Pool({
-  host: process.env.DB_HOST || '127.0.0.1',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  database: process.env.DB_NAME || 'taskflow_db',
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
-  max: 10,
-  idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 2000,
-});
+// Determine SSL configuration
+// Hosted PostgreSQL providers (Neon, Supabase, Vercel Postgres, AWS RDS) require SSL.
+// Local PostgreSQL typically runs without SSL.
+const isCloudOrProd = Boolean(connectionString) || process.env.NODE_ENV === 'production' || !!process.env.VERCEL;
+const useSsl = process.env.DB_SSL === 'false'
+  ? false
+  : (process.env.DB_SSL === 'true' || isCloudOrProd ? { rejectUnauthorized: false } : false);
+
+const poolConfig = connectionString
+  ? {
+      connectionString,
+      ssl: useSsl,
+      max: parseInt(process.env.DB_POOL_MAX || '10', 10),
+      idleTimeoutMillis: 10000,
+      connectionTimeoutMillis: 5000,
+    }
+  : {
+      host: process.env.DB_HOST || '127.0.0.1',
+      port: parseInt(process.env.DB_PORT || '5432', 10),
+      database: process.env.DB_NAME || 'taskflow_db',
+      user: process.env.DB_USER || 'postgres',
+      password: process.env.DB_PASSWORD || 'postgres',
+      ssl: useSsl,
+      max: parseInt(process.env.DB_POOL_MAX || '10', 10),
+      idleTimeoutMillis: 10000,
+      connectionTimeoutMillis: 5000,
+    };
+
+const pool = new Pool(poolConfig);
 
 pool.on('error', (err) => {
-  // Silent catch to prevent crashing when PostgreSQL is offline
   if (err.code !== 'ECONNREFUSED') {
-    console.error('Unexpected error on idle PostgreSQL client:', err.message);
+    console.error('[Database Pool Error] Unexpected error on idle PostgreSQL client:', err.message);
   }
 });
 
-// --- Resilient In-Memory Fallback Store (Used when PostgreSQL is offline) ---
+let isPgConnected = null; // null: not checked yet, true: verified, false: offline fallback
+
+// --- Resilient In-Memory Fallback Store (Used ONLY when local PostgreSQL is offline and NO DATABASE_URL is configured) ---
 const memoryUsers = [
   {
     id: 1,
@@ -72,6 +92,7 @@ const memoryTasks = [
     priority: 'High',
     status: 'In Progress',
     created_at: new Date('2026-11-16T09:00:00Z'),
+    updated_at: new Date('2026-11-16T09:00:00Z'),
   },
   {
     id: 2,
@@ -84,6 +105,7 @@ const memoryTasks = [
     priority: 'Medium',
     status: 'Completed',
     created_at: new Date('2026-11-15T11:30:00Z'),
+    updated_at: new Date('2026-11-15T11:30:00Z'),
   },
   {
     id: 3,
@@ -96,6 +118,7 @@ const memoryTasks = [
     priority: 'Low',
     status: 'Pending',
     created_at: new Date('2026-11-17T14:20:00Z'),
+    updated_at: new Date('2026-11-17T14:20:00Z'),
   },
   {
     id: 4,
@@ -108,6 +131,7 @@ const memoryTasks = [
     priority: 'Low',
     status: 'Pending',
     created_at: new Date('2026-11-10T10:00:00Z'),
+    updated_at: new Date('2026-11-10T10:00:00Z'),
   },
   {
     id: 5,
@@ -120,6 +144,7 @@ const memoryTasks = [
     priority: 'Medium',
     status: 'Pending',
     created_at: new Date('2026-11-17T16:45:00Z'),
+    updated_at: new Date('2026-11-17T16:45:00Z'),
   },
 ];
 
@@ -154,8 +179,8 @@ function handleMemoryQuery(text, params = []) {
       email: params[2],
       password_hash: params[3],
       role: params[4] || 'user',
-      title: params[5] || 'Member',
-      department: params[6] || 'Engineering',
+      title: params[5] || 'Product Member',
+      department: params[6] || 'Product',
       status: 'Active',
       avatar: params[7] || (params[0] ? params[0][0].toUpperCase() : 'U'),
       created_at: new Date(),
@@ -259,6 +284,7 @@ function handleMemoryQuery(text, params = []) {
       priority: params[5] || 'Medium',
       due_date: params[6] || null,
       created_at: new Date(),
+      updated_at: new Date(),
       category_name: 'Work',
     };
     memoryTasks.unshift(newTask);
@@ -276,6 +302,7 @@ function handleMemoryQuery(text, params = []) {
       if (q.includes('title =')) {
         task.title = params[0];
       }
+      task.updated_at = new Date();
     }
     return { rows: task ? [task] : [] };
   }
@@ -308,25 +335,49 @@ function handleMemoryQuery(text, params = []) {
 }
 
 async function query(text, params = []) {
-  if (isPgAvailable === false) {
-    return handleMemoryQuery(text, params);
-  }
-
   try {
     const res = await pool.query(text, params);
-    isPgAvailable = true;
+    if (isPgConnected !== true) {
+      isPgConnected = true;
+    }
     return res;
   } catch (err) {
+    // When DATABASE_URL is configured, PostgreSQL persistence is explicitly expected.
+    // NEVER silently fall back to in-memory store when a real database connection was specified!
+    if (connectionString) {
+      console.error(`[Database Error] PostgreSQL query failed on connected database: ${err.message}`);
+      throw err;
+    }
+
+    // When NO DATABASE_URL is set and local PostgreSQL is offline on 127.0.0.1:
     if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT') {
-      isPgAvailable = false;
+      if (isPgConnected !== false) {
+        console.warn(`\n[Database Warning] PostgreSQL is offline on localhost (${err.message}).`);
+        console.warn(`[Database Warning] Operating in temporary in-memory demo mode. DATA WILL NOT PERSIST!`);
+        console.warn(`[Database Warning] To persist data, configure DATABASE_URL in .env or start local PostgreSQL.\n`);
+        isPgConnected = false;
+      }
       return handleMemoryQuery(text, params);
     }
+
+    // Any SQL syntax, constraint, or schema error must be thrown directly
+    console.error(`[Database Error] SQL query error: ${err.message}`);
     throw err;
   }
+}
+
+function getDatabaseStatus() {
+  return {
+    engine: 'PostgreSQL',
+    isCloud: Boolean(connectionString),
+    isConnected: isPgConnected === true,
+    mode: isPgConnected === true ? 'PostgreSQL Persistent' : (isPgConnected === false ? 'In-Memory Fallback (Offline)' : 'Pending Verification'),
+  };
 }
 
 module.exports = {
   pool,
   query,
   getClient: () => pool.connect(),
+  getDatabaseStatus,
 };
