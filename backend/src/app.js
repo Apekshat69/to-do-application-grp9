@@ -39,8 +39,27 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Health Check Endpoint
-app.get('/api/health', (req, res) => {
-  const dbStatus = typeof db.getDatabaseStatus === 'function' ? db.getDatabaseStatus() : { engine: 'PostgreSQL' };
+app.get('/api/health', async (req, res) => {
+  let dbStatus = typeof db.getDatabaseStatus === 'function' ? db.getDatabaseStatus() : { engine: 'PostgreSQL' };
+  try {
+    const dbTest = await db.pool.query('SELECT NOW() as current_time, current_database() as database');
+    dbStatus = {
+      engine: 'PostgreSQL',
+      isCloud: Boolean(process.env.DATABASE_URL),
+      isConnected: true,
+      database: dbTest.rows[0].database,
+      mode: 'PostgreSQL Persistent',
+    };
+  } catch (err) {
+    dbStatus = {
+      engine: 'PostgreSQL',
+      isCloud: Boolean(process.env.DATABASE_URL),
+      isConnected: false,
+      error: err.message,
+      mode: process.env.DATABASE_URL ? 'Connection Error' : 'In-Memory Fallback (Offline)',
+    };
+  }
+
   res.status(200).json({
     status: 'OK',
     service: 'TaskFlow REST API Backend',
