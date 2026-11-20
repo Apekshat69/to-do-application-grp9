@@ -12,8 +12,8 @@ VALUES
     (2, 'Admin', 'TaskFlow Administrator', 'admin@taskflow.dev', '$2a$10$BXNIKSuYzDnd3M6UsHXcoeR3fqQ7v2EUgD64ZGWHAId5Dps7noPsm', 'admin', 'System Administrator', 'Operations', 'Active', 'AD', '2025-10-01 00:00:00')
 ON CONFLICT (email) DO NOTHING;
 
--- Synchronize users sequence
-SELECT setval('users_id_seq', (SELECT COALESCE(MAX(id), 1) FROM users));
+-- Synchronize users sequence safely using pg_get_serial_sequence
+SELECT setval(pg_get_serial_sequence('users', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM users WHERE pg_get_serial_sequence('users', 'id') IS NOT NULL;
 
 -- 2. SEED DEFAULT CATEGORIES FOR ALEX (user_id = 1)
 INSERT INTO categories (id, user_id, name, created_at)
@@ -24,8 +24,8 @@ VALUES
     (4, 1, 'Other', CURRENT_TIMESTAMP)
 ON CONFLICT (id) DO NOTHING;
 
--- Synchronize categories sequence
-SELECT setval('categories_id_seq', (SELECT COALESCE(MAX(id), 1) FROM categories));
+-- Synchronize categories sequence safely
+SELECT setval(pg_get_serial_sequence('categories', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM categories WHERE pg_get_serial_sequence('categories', 'id') IS NOT NULL;
 
 -- 3. SEED INITIAL TASKS FOR ALEX (user_id = 1)
 INSERT INTO tasks (id, user_id, category_id, title, description, status, priority, due_date, created_at, updated_at)
@@ -37,5 +37,5 @@ VALUES
     (5, 1, 1, 'Plan sprint deliverables', 'Map out roadmap milestones, team priorities, and ticket estimates.', 'Pending', 'Medium', '2026-11-20', '2026-11-17 16:45:00', CURRENT_TIMESTAMP)
 ON CONFLICT (id) DO NOTHING;
 
--- Synchronize tasks sequence
-SELECT setval('tasks_id_seq', (SELECT COALESCE(MAX(id), 5) FROM tasks));
+-- Synchronize tasks sequence safely
+SELECT setval(pg_get_serial_sequence('tasks', 'id'), GREATEST(COALESCE(MAX(id), 5), 5)) FROM tasks WHERE pg_get_serial_sequence('tasks', 'id') IS NOT NULL;
